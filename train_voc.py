@@ -69,6 +69,7 @@ def train(opt):
     test_set = VOCDataset(opt.data_path, opt.year, opt.test_set, opt.image_size, is_training=False)
     test_generator = DataLoader(test_set, **test_params)
 
+    '''
     if torch.cuda.is_available():
         if opt.pre_trained_model_type == "model":
             model = torch.load(opt.pre_trained_model_path)
@@ -81,6 +82,8 @@ def train(opt):
         else:
             model = Yolo(training_set.num_classes)
             model.load_state_dict(torch.load(opt.pre_trained_model_path, map_location=lambda storage, loc: storage))
+    '''
+    model = Yolo(training_set.num_classes)
     # The following line will re-initialize weight for the last layer, which is useful
     # when you want to retrain the model based on my trained weights. if you uncomment it,
     # you will see the loss is already very small at the beginning.
