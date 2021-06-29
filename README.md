@@ -1,17 +1,9 @@
 # [PYTORCH] YOLO (You Only Look Once)
 
-## Introduction
-
-Here is my pytorch implementation of the model described in the paper **YOLO9000: Better, Faster, Stronger** [paper](https://arxiv.org/abs/1612.08242). 
-<p align="center">
-  <img src="demo/video.gif"><br/>
-  <i>An example of my model's output.</i>
-</p>
-
 ## How to use my code
 
 With my code, you can:
-* **Train your model from scratch**
+* **Train your model from scratch** (by commenting the lines used pre_trained_model)
 * **Train your model with my trained model**
 * **Evaluate test images with either my trained model or yours**
 
