@@ -1,9 +1,13 @@
 # [PYTORCH] YOLO (You Only Look Once)
 
+## updates:
+I commented the parts required pre_trained_model so that it can train from scratch
+
+
 ## How to use my code
 
 With my code, you can:
-* **Train your model from scratch** (by commenting the lines used pre_trained_model)
+* **Train your model from scratch**
 * **Train your model with my trained model**
 * **Evaluate test images with either my trained model or yours**
 
