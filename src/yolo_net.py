@@ -6,12 +6,13 @@ import torch
 
 
 class Yolo(nn.Module):
-    def __init__(self, num_classes,
+    def __init__(self, num_classes, num_ratio_grid=16,
                  anchors=[(1.3221, 1.73145), (3.19275, 4.00944), (5.05587, 8.09892), (9.47112, 4.84053),
                           (11.2364, 10.0071)]):
         super(Yolo, self).__init__()
         self.num_classes = num_classes
         self.anchors = anchors
+        self.num_mask_grid = num_ratio_grid
 
         self.stage1_conv1 = nn.Sequential(nn.Conv2d(3, 32, 3, 1, 1, bias=False), nn.BatchNorm2d(32),
                                           nn.LeakyReLU(0.1, inplace=True), nn.MaxPool2d(2, 2))
@@ -61,7 +62,7 @@ class Yolo(nn.Module):
 
         self.stage3_conv1 = nn.Sequential(nn.Conv2d(256 + 1024, 1024, 3, 1, 1, bias=False), nn.BatchNorm2d(1024),
                                           nn.LeakyReLU(0.1, inplace=True))
-        self.stage3_conv2 = nn.Conv2d(1024, len(self.anchors) * (5 + num_classes), 1, 1, 0, bias=False)
+        self.stage3_conv2 = nn.Conv2d(1024, len(self.anchors) * (5 + num_classes + num_ratio_grid), 1, 1, 0, bias=False)
 
     def forward(self, input):
         output = self.stage1_conv1(input)

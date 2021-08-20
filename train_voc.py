@@ -116,29 +116,33 @@ def train(opt):
                 image = Variable(image, requires_grad=True)
             optimizer.zero_grad()
             logits = model(image)
-            loss, loss_coord, loss_conf, loss_cls = criterion(logits, label)
+            loss, loss_coord, loss_conf, loss_cls, loss_ratio = criterion(logits, label)
             loss.backward()
             optimizer.step()
-            print("Epoch: {}/{}, Iteration: {}/{}, Lr: {}, Loss:{:.2f} (Coord:{:.2f} Conf:{:.2f} Cls:{:.2f})".format(
-                epoch + 1,
-                opt.num_epoches,
-                iter + 1,
-                num_iter_per_epoch,
-                optimizer.param_groups[0]['lr'],
-                loss,
-                loss_coord,
-                loss_conf,
-                loss_cls))
+            print(
+                "Epoch: {}/{}, Iteration: {}/{}, Lr: {}, Loss:{:.2f} (Coord:{:.2f} Conf:{:.2f} Cls:{:.2f}) Ratio: {:.2f}".format(
+                    epoch + 1,
+                    opt.num_epoches,
+                    iter + 1,
+                    num_iter_per_epoch,
+                    optimizer.param_groups[0]['lr'],
+                    loss,
+                    loss_coord,
+                    loss_conf,
+                    loss_cls,
+                    loss_ratio))
             writer.add_scalar('Train/Total_loss', loss, epoch * num_iter_per_epoch + iter)
             writer.add_scalar('Train/Coordination_loss', loss_coord, epoch * num_iter_per_epoch + iter)
             writer.add_scalar('Train/Confidence_loss', loss_conf, epoch * num_iter_per_epoch + iter)
             writer.add_scalar('Train/Class_loss', loss_cls, epoch * num_iter_per_epoch + iter)
+            writer.add_scalar('Train/Ratio_loss', loss_ratio, epoch * num_iter_per_epoch + iter)
         if epoch % opt.test_interval == 0:
             model.eval()
             loss_ls = []
             loss_coord_ls = []
             loss_conf_ls = []
             loss_cls_ls = []
+            loss_ratio_ls = []
             for te_iter, te_batch in enumerate(test_generator):
                 te_image, te_label = te_batch
                 num_sample = len(te_label)
@@ -146,27 +150,32 @@ def train(opt):
                     te_image = te_image.cuda()
                 with torch.no_grad():
                     te_logits = model(te_image)
-                    batch_loss, batch_loss_coord, batch_loss_conf, batch_loss_cls = criterion(te_logits, te_label)
+                    batch_loss, batch_loss_coord, batch_loss_conf, batch_loss_cls, batch_loss_ratio = criterion(
+                        te_logits, te_label)
                 loss_ls.append(batch_loss * num_sample)
                 loss_coord_ls.append(batch_loss_coord * num_sample)
                 loss_conf_ls.append(batch_loss_conf * num_sample)
                 loss_cls_ls.append(batch_loss_cls * num_sample)
+                loss_ratio_ls.append(batch_loss_cls * num_sample)
             te_loss = sum(loss_ls) / test_set.__len__()
             te_coord_loss = sum(loss_coord_ls) / test_set.__len__()
             te_conf_loss = sum(loss_conf_ls) / test_set.__len__()
             te_cls_loss = sum(loss_cls_ls) / test_set.__len__()
-            print("Epoch: {}/{}, Lr: {}, Loss:{:.2f} (Coord:{:.2f} Conf:{:.2f} Cls:{:.2f})".format(
+            te_ratio_loss = sum(loss_ratio_ls) / test_set.__len__()
+            print("Epoch: {}/{}, Lr: {}, Loss:{:.2f} (Coord:{:.2f} Conf:{:.2f} Cls:{:.2f}) Ratio: {:.2f}".format(
                 epoch + 1,
                 opt.num_epoches,
                 optimizer.param_groups[0]['lr'],
                 te_loss,
                 te_coord_loss,
                 te_conf_loss,
-                te_cls_loss))
+                te_cls_loss,
+                te_ratio_loss))
             writer.add_scalar('Test/Total_loss', te_loss, epoch)
             writer.add_scalar('Test/Coordination_loss', te_coord_loss, epoch)
             writer.add_scalar('Test/Confidence_loss', te_conf_loss, epoch)
             writer.add_scalar('Test/Class_loss', te_cls_loss, epoch)
+            writer.add_scalar('Test/Ratio_loss', te_ratio_loss, epoch)
             model.train()
             if te_loss + opt.es_min_delta < best_loss:
                 best_loss = te_loss
