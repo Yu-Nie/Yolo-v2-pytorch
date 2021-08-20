@@ -1,6 +1,3 @@
-"""
-@author: Viet Nguyen <nhviet1009@gmail.com>
-"""
 import math
 import torch
 import torch.nn as nn
@@ -24,20 +21,21 @@ class YoloLoss(nn.modules.loss._Loss):
         self.thresh = thresh
 
     def forward(self, output, target):
-
         batch_size = output.data.size(0)
         height = output.data.size(2)
         width = output.data.size(3)
 
-        # Get x,y,w,h,conf,cls
+        # Get x,y,w,h,conf,cls,ratio
         output = output.view(batch_size, self.num_anchors, -1, height * width)
+
         coord = torch.zeros_like(output[:, :, :4, :])
-        coord[:, :, :2, :] = output[:, :, :2, :].sigmoid()  
+        coord[:, :, :2, :] = output[:, :, :2, :].sigmoid()
         coord[:, :, 2:4, :] = output[:, :, 2:4, :]
         conf = output[:, :, 4, :].sigmoid()
-        cls = output[:, :, 5:, :].contiguous().view(batch_size * self.num_anchors, self.num_classes,
-                                                    height * width).transpose(1, 2).contiguous().view(-1,
-                                                                                                      self.num_classes)
+        cls = output[:, :, 5:5 + self.num_classes, :].contiguous().view(batch_size * self.num_anchors, self.num_classes,
+                                                                        height * width). \
+            transpose(1, 2).contiguous().view(-1, self.num_classes)
+        ratio = output[:, :, (5 + self.num_classes):, :].sigmoid()
 
         # Create prediction boxes
         pred_boxes = torch.FloatTensor(batch_size * self.num_anchors * height * width, 4)
@@ -60,8 +58,11 @@ class YoloLoss(nn.modules.loss._Loss):
         pred_boxes = pred_boxes.cpu()
 
         # Get target values
-        coord_mask, conf_mask, cls_mask, tcoord, tconf, tcls = self.build_targets(pred_boxes, target, height, width)
+        coord_mask, conf_mask, cls_mask, ratio_mask, tcoord, tconf, tcls, tratio = self.build_targets(pred_boxes,
+                                                                                                      target, height,
+                                                                                                      width)
         coord_mask = coord_mask.expand_as(tcoord)
+        ratio_mask = ratio_mask.expand_as(tratio)
         tcls = tcls[cls_mask].view(-1).long()
         cls_mask = cls_mask.view(-1, 1).repeat(1, self.num_classes)
 
@@ -82,9 +83,10 @@ class YoloLoss(nn.modules.loss._Loss):
         self.loss_coord = self.coord_scale * mse(coord * coord_mask, tcoord * coord_mask) / batch_size
         self.loss_conf = mse(conf * conf_mask, tconf * conf_mask) / batch_size
         self.loss_cls = self.class_scale * 2 * ce(cls, tcls) / batch_size
-        self.loss_tot = self.loss_coord + self.loss_conf + self.loss_cls
+        self.loss_mask = mse(ratio * ratio_mask, tratio * ratio_mask) / batch_size
+        self.loss_tot = self.loss_coord + self.loss_conf + self.loss_cls + self.loss_mask
 
-        return self.loss_tot, self.loss_coord, self.loss_conf, self.loss_cls
+        return self.loss_tot, self.loss_coord, self.loss_conf, self.loss_cls, self.loss_mask
 
     def build_targets(self, pred_boxes, ground_truth, height, width):
         batch_size = len(ground_truth)
@@ -92,9 +94,11 @@ class YoloLoss(nn.modules.loss._Loss):
         conf_mask = torch.ones(batch_size, self.num_anchors, height * width, requires_grad=False) * self.noobject_scale
         coord_mask = torch.zeros(batch_size, self.num_anchors, 1, height * width, requires_grad=False)
         cls_mask = torch.zeros(batch_size, self.num_anchors, height * width, requires_grad=False).byte()
+        ratio_mask = torch.zeros(batch_size, self.num_anchors, 1, height * width, requires_grad=False)
         tcoord = torch.zeros(batch_size, self.num_anchors, 4, height * width, requires_grad=False)
         tconf = torch.zeros(batch_size, self.num_anchors, height * width, requires_grad=False)
         tcls = torch.zeros(batch_size, self.num_anchors, height * width, requires_grad=False)
+        tratio = torch.zeros(batch_size, self.num_anchors, 16, height * width, requires_grad=False)
 
         for b in range(batch_size):
             if len(ground_truth[b]) == 0:
@@ -103,25 +107,31 @@ class YoloLoss(nn.modules.loss._Loss):
             # Build up tensors
             cur_pred_boxes = pred_boxes[
                              b * (self.num_anchors * height * width):(b + 1) * (self.num_anchors * height * width)]
+
             if self.anchor_step == 4:
                 anchors = self.anchors.clone()
                 anchors[:, :2] = 0
             else:
                 anchors = torch.cat([torch.zeros_like(self.anchors), self.anchors], 1)
-            gt = torch.zeros(len(ground_truth[b]), 4)
+            gt = torch.zeros(len(ground_truth[b]), 20)
+
             for i, anno in enumerate(ground_truth[b]):
                 gt[i, 0] = (anno[0] + anno[2] / 2) / self.reduction
                 gt[i, 1] = (anno[1] + anno[3] / 2) / self.reduction
                 gt[i, 2] = anno[2] / self.reduction
                 gt[i, 3] = anno[3] / self.reduction
+                gt[i, 4:] = torch.FloatTensor(anno[5:])
 
             # Set confidence mask of matching detections to 0
             iou_gt_pred = bbox_ious(gt, cur_pred_boxes)
+
             mask = (iou_gt_pred > self.thresh).sum(0) >= 1
+
             conf_mask[b][mask.view_as(conf_mask[b])] = 0
 
             # Find best anchor for each ground truth
             gt_wh = gt.clone()
+
             gt_wh[:, :2] = 0
             iou_gt_anchors = bbox_ious(gt_wh, anchors)
             _, best_anchors = iou_gt_anchors.max(1)
@@ -133,16 +143,19 @@ class YoloLoss(nn.modules.loss._Loss):
                 best_n = best_anchors[i]
                 iou = iou_gt_pred[i][best_n * height * width + gj * width + gi]
                 coord_mask[b][best_n][0][gj * width + gi] = 1
+                ratio_mask[b][best_n][0][gj * width + gi] = 1
                 cls_mask[b][best_n][gj * width + gi] = 1
                 conf_mask[b][best_n][gj * width + gi] = self.object_scale
                 tcoord[b][best_n][0][gj * width + gi] = gt[i, 0] - gi
                 tcoord[b][best_n][1][gj * width + gi] = gt[i, 1] - gj
                 tcoord[b][best_n][2][gj * width + gi] = math.log(max(gt[i, 2], 1.0) / self.anchors[best_n, 0])
                 tcoord[b][best_n][3][gj * width + gi] = math.log(max(gt[i, 3], 1.0) / self.anchors[best_n, 1])
+                tratio[b, best_n, :, gj * width + gi] = gt[i, 4:]
                 tconf[b][best_n][gj * width + gi] = iou
                 tcls[b][best_n][gj * width + gi] = int(anno[4])
 
-        return coord_mask, conf_mask, cls_mask, tcoord, tconf, tcls
+
+        return coord_mask, conf_mask, cls_mask, ratio_mask, tcoord, tconf, tcls, tratio
 
 
 def bbox_ious(boxes1, boxes2):
